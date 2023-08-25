@@ -1,0 +1,24 @@
+name: drag
+model:
+  epsilon: 0.1
+  batch_size: 5
+  gamma: 0.9
+  learning_rate: 0.00025
+  synchro_time: 100
+  weight_name: weight.pth
+  test_anim_name: test.GIF
+  warm_up_anim_name: warm_up.GIF
+  reward_fig_name: reward.png
+  test_reward_fig_name: reward.png
+  loss_fig_name: loss.png
+  anim_interval: 25
+  train_anim_show: false
+env:
+  init_wide: 0.5
+  init_height: 0.5
+  max_episode: 100
+  max_epoch: 80
+  warm_up_epoch: 10
+  round_digit: 16
+  edp_path: /Users/YudaiSugiyama/00-Kurahashi-labo/00-program/06-DQN-minimize-drag/test.edp
+  csv_path: data.csv

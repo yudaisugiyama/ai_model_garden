@@ -1,0 +1,126 @@
+include "getARGV.idp"
+
+verbosity = 0;
+bool ScreenDisplay = 0;
+bool OutPltFile = 0;
+bool OutCsvFile = 1;
+bool get = 1;
+
+real w = (get ? getARGV("-w", 1.) : 0.5);		
+real h = (get ? getARGV("-h", 1.) : 0.5);		
+real r = 0.5;
+real width = 20*r;
+real length = 60*r;
+
+int Dirichlet = 1, Circle = 2;
+border L0(t=0,-width){x=0; y=t; label=Dirichlet;};
+border L1(t=0,length){x=t; y=-width; label=Dirichlet;};
+border L2(t=-width,0){x=length; y=t; label=Dirichlet;}
+border L3(t=length,0){x=t; y=0; label=Dirichlet;};
+border C(t=0,2*pi){x=width+w*cos(t); y=(-0.5*width)+h*sin(t); label=Circle;};
+
+macro pow2(x)(2^x) // 
+real maxh = 0; // メッシュの細かさ
+
+mesh Th = buildmesh(L0(20*pow2(maxh))+L1(60*pow2(maxh))+L2(20*pow2(maxh))+L3(60*pow2(maxh))+C(-200*pow2(maxh)));
+
+fespace Vh(Th,[P2,P2]),Qh(Th,P1);
+
+real imax = 1;// 500
+Vh [u1,u2],[v1,v2],[up1,up2]; // u: 流速, v: テスト関数, up: 流速履歴
+Qh p,pp,q,vd1,vd2,Fdv; // p: 圧力, pp:圧力履歴, q: スカラー関数, vd1,vd2: 重み関数v^D, Fdv:抗力
+
+// The solver is Gauss’ LU factorization and when init ≠ 0
+// the LU decomposition is reused so it is much faster after 
+// the first iteration.
+
+// epsilon: 変形速度テンソル
+macro  e11(u) (dx(u#1)) //  epsilon_11
+macro  e22(u) (dy(u#2)) //  epsilon_22
+macro  e12(u) ((dy(u#1) + dx(u#2))/2.0) // epsilon_12=epsilon_21
+macro  Div(u) (dx(u#1) + dy(u#2)) // 発散
+macro  Grad(f) [dx(f), dy(f)] // 勾配
+
+real dt = 0.03;
+real alpha = 1.0/dt;
+int init = 0;
+int i = 0;
+int nu = 1.0/100.0; // nu = 1.0/Re
+
+problem NS([u1,u2,p],[v1,v2,q],solver=UMFPACK,init=i)=
+     int2d(Th)(alpha*(u1*v1+u2*v2))
+    +int2d(Th)(nu*2.0*(e11(u)*e11(v)+2.0*e12(u)*e12(v)+e22(u)*e22(v)))
+    -int2d(Th)(Div(v)*p+Div(u)*q)
+    -int2d(Th)(p*q*1.e-10) // ペナルティ項     
+    -int2d(Th)(alpha*convect([up1,up2],-dt,up1)*v1)
+    -int2d(Th)(alpha*convect([up1,up2],-dt,up2)*v2)
+    // convect(): 特性曲線有限要素近似 p136
+	+on(Dirichlet,u1=1,u2=0)
+    +on(Circle,u1=0,u2=0);
+
+real area = int2d(Th)(1.0);
+
+[u1,u2] = [0,0]; // 初期条件
+
+real t = 0;
+real objective = 0;
+real f = 0;
+real Fd = 0;
+
+// weighting function
+varf weight(e,v1) = int2d(Th)(f*v1) 
+                    +on(Dirichlet,e=0)
+                    +on(Circle,e=1);
+vd1[] = weught(0,Qh,tgv=1); 
+vd2 = 0;
+
+{if(OutCsvFile) ofstream outcsv("data.csv");
+for(int i=1;i<=imax;i++){
+    t = i * dt;
+    [up1,up2] = [u1,u2]; 
+    pp = p;
+    NS;  
+
+    // 尾関さんの式
+    Fd = int2d(Th)(alpha*[u1,u2]'*[vd1,vd2]) 
+        // a={u1,u2},b={vd1,vd2} a'*b=u1*vd1+u2*vd2
+        -int2d(Th)(alpha*convect([up1,up2],-dt,up1)*vd1)
+        -int2d(Th)(alpha*convect([up1,up2],-dt,up2)*vd2)
+        +int2d(Th)(nu*(Grad(up1)'*Grad(vd1)+Grad(up2)'*Grad(vd2)))
+        -int2d(Th)((dx(vd1)+dy(vd2))*p);
+
+    Fdv= (alpha*[u1,u2]'*[vd1,vd2]) 
+        -(alpha*convect([up1,up2],-dt,up1)*vd1)
+        -(alpha*convect([up1,up2],-dt,up2)*vd2)
+        +(nu*(Grad(up1)'*Grad(vd1)+Grad(up2)'*Grad(vd2)))
+        -((dx(vd1)+dy(vd2))*p);
+
+    // Fd = int2d(Th)(Fdv);
+
+    if(OutCsvFile&&i==1){
+		outcsv 	<<"Iteration,Objective,Area,Witdh,Height"<<endl
+				<<"0"<<","<<objective<<","<<area<<","<<w<<","<<h<<endl;				
+	}    
+
+    if(ScreenDisplay) plot([Fdv],cmm="t="+t,fill=true,value=true,ps="outputs/state-"+i+".eps",dim=3);
+    if(OutPltFile){
+        ofstream outplt("outputs/state.plt",append);
+                 outplt <<"VARIABLES = \"X\",\"Y\",\"u1\",\"u2\",\"p\",\"Fdv\""<<endl;
+                 outplt <<"ZONE T=\"TRIANGLE\",N="<<Th.nv<<",E="<<Th.nt<<",F=FEPOINT,ET=TRIANGLE"<<endl;
+                 for(int j=0;j<Th.nv;j++) outplt <<Th(j).x <<" "<<Th(j).y<<" "<<up1(Th(j).x,Th(j).y)<<" "<<up2(Th(j).x,Th(j).y)<<" "<<pp(Th(j).x,Th(j).y)<<" "<<Fdv(Th(j).x,Th(j).y)<<endl;
+                 for(int l=0;l<Th.nt;l++) outplt <<Th[l][0]+1.<<" "<<Th[l][1]+1.<<" "<<Th[l][2]+1.<<endl;
+    }
+
+   objective = objective + Fd * Fd * dt;
+   cout << "objective= " << objective << endl;
+
+    if(OutCsvFile){
+        outcsv 	<<i<<","<<objective<< endl;				
+	}
+
+}// 順解析{
+}// ofstreem{
+
+verbosity = true;
+
+// https://doc.freefem.org/tutorials/fanBlade.html#heat-convection-around-the-airfoil
