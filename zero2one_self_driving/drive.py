@@ -19,6 +19,10 @@ sio = socketio.Server()
 app = Flask(__name__)
 model = None
 
+# Initialize PID variables
+integral = 0.0
+prev_speed_error = 0.0
+
 def send_control(steering_angle, throttle):
     sio.emit(
         "steer",
@@ -53,33 +57,25 @@ def telemetry(sid, data):
         try:
             image = np.asarray(image) # PIL image to numpy array
             image = np.array([image])
+            
             # Predicting angle
             steering_angle = float(model.predict(image, batch_size=1))
 
-            # Controlling speed
-            MAX_SPEED = 15
-            MIN_SPEED = 1
-            SLOW_SPEED = 3
-            CURVE_SPEED = 5
-            BEFORE_CURVE_SPEED = 10
-            MAX_ANGLE = 0.6
-            MIN_ANGLE = 1
-            
-            if float(speed) > MAX_SPEED:
-                throttle = -1.0
-            elif float(speed) < SLOW_SPEED:
-                throttle = 30.0
-            else:
-                throttle = 0.3
+            # PID Controller Constants
+            Kp = 0.1  # Proportional gain
+            Ki = 0.01  # Integral gain
+            Kd = 0.02  # Derivative gain
+            target_speed = 18  # Set your target speed here
 
-            if abs(steering_angle) > MAX_ANGLE:
-                if float(speed) > CURVE_SPEED:
-                    throttle = -1.0
-                elif float(speed) > BEFORE_CURVE_SPEED:
-                    throttle = 0.0
-                    
-            if float(speed) < MIN_SPEED:
-                throttle = 20.0       
+            # Calculate error
+            speed_error = target_speed - speed
+
+            # PID control
+            throttle = Kp * speed_error + Ki * integral + Kd * (speed_error - prev_speed_error)
+
+            # Update integral and previous error for next iteration
+            integral += speed_error
+            prev_speed_error = speed_error
 
             print('steering_angle:{} throttle:{} speed:{}'.format(steering_angle, throttle, speed))
             send_control(steering_angle, throttle)
